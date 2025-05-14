@@ -1,4 +1,4 @@
-# src/fetch_gh_data_3/fetch_issues.py
+# src/fetch_gh_data/fetch_issues.py
 
 import os
 import pandas as pd
@@ -124,7 +124,15 @@ def fetch_gh_issues(
         print(f"Found {len(issues)} issues in {repository}")
 
         # Convert to DataFrame using a separate task
-        return convert_and_process(issues, show_urls)
+        df = convert_and_process(issues, show_urls)
+
+        # Save data to CSV file with sanitized repository name
+        sanitized_repo = (
+            repository.replace("/", "_").replace("-", "_").replace(".", "_")
+        )
+        df.to_csv(f"{sanitized_repo}_issues.csv", index=False)
+
+        return df
 
     except Exception as e:
         print(f"Error in flow execution: {e}")
