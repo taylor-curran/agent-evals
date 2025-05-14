@@ -76,7 +76,7 @@ def comments_to_dataframe(comments: List[Dict[str, Any]]) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 
-@flow(name="Fetch Issues Metadata", log_prints=False)
+@flow(name="fetch many issues metadata", log_prints=False)
 def fetch_many_issues(
     repo: str,
     token: Optional[str] = None,
@@ -116,7 +116,7 @@ def fetch_many_issues(
 # ---------------------------------------------------------------------------
 
 
-@flow(name="Fetch Issue Comments", log_prints=False)
+@flow(name="fetch many issue comments", log_prints=False)
 def fetch_many_comments_for_issues(
     issues: List[Dict[str, Any]],
     token: Optional[str] = None,
