@@ -5,7 +5,6 @@ import pandas as pd
 from typing import List, Dict, Any, Optional
 from prefect import flow
 
-# import helper utilities
 from helper import (
     fetch_issue_page,
     convert_and_process,
@@ -17,7 +16,6 @@ def fetch_issues(
     repo: str,
     token: Optional[str] = None,
     limit: int = 30,
-    exclude_pulls: bool = False,
     max_pages: int = 20,
 ) -> List[Dict[Any, Any]]:
     """
@@ -28,7 +26,6 @@ def fetch_issues(
         token: GitHub personal access token (optional)
         limit: Maximum number of issues to return (default: 30)
               Will fetch multiple pages if limit > 100
-        exclude_pulls: If True, excludes pull requests from results (default: False)
 
     Returns:
         List of issue dictionaries
@@ -66,21 +63,15 @@ def fetch_issues(
         if not page_issues_raw:
             break
 
-        # Keep original length (before filtering) for pagination checks
-        original_count = len(page_issues_raw)
-
-        # Filter out pull requests if requested
-        if exclude_pulls:
-            page_issues = [
-                issue for issue in page_issues_raw if "pull_request" not in issue
-            ]
-        else:
-            page_issues = page_issues_raw
+        # Always exclude pull requests from results
+        page_issues = [
+            issue for issue in page_issues_raw if "pull_request" not in issue
+        ]
 
         all_issues.extend(page_issues)
 
         # If the page contained fewer items than requested, we've reached the last page
-        if original_count < per_page:
+        if len(page_issues_raw) < per_page:
             break
 
     # Return only up to the requested limit
@@ -94,7 +85,6 @@ def fetch_issues(
 def fetch_gh_issues(
     repository: str,
     limit: int = 100,
-    exclude_pulls: bool = True,
     max_pages: int = 20,
     token: Optional[str] = None,
     show_urls: bool = True,
@@ -105,9 +95,8 @@ def fetch_gh_issues(
     Args:
         repository: Repository name in the format 'owner/repo'
         limit: Maximum number of issues to return (default: 100)
-        exclude_pulls: Whether to exclude pull requests (default: True)
         max_pages: Maximum number of pages to fetch (default: 20)
-        token: GitHub personal access token (default: None, will use GITHUB_TOKEN env variable if not provided)
+        token: GitHub personal access token (optional). If omitted, the function falls back to the GITHUB_TOKEN environment variable.
         show_urls: Whether to print issue URLs (default: True)
 
     Returns:
@@ -120,9 +109,9 @@ def fetch_gh_issues(
 
     try:
         # Fetch issues via the page-level retry mechanism
-        issues = fetch_issues(repository, token, limit, exclude_pulls, max_pages)
+        # Always exclude pull requests
+        issues = fetch_issues(repository, token, limit, max_pages)
         print(f"Found {len(issues)} issues in {repository}")
-
         # Convert to DataFrame using a separate task
         df = convert_and_process(issues, show_urls)
 
@@ -132,6 +121,8 @@ def fetch_gh_issues(
         )
         df.to_csv(f"{sanitized_repo}_issues.csv", index=False)
 
+        print(f"Saved {len(issues)} issues to {sanitized_repo}_issues.csv")
+
         return df
 
     except Exception as e:
@@ -140,25 +131,13 @@ def fetch_gh_issues(
 
 
 if __name__ == "__main__":
-    # Example usage - change these parameters as needed
-    repository = (
-        "DataDog/datadog-agent"  # Fixed capitalization to match GitHub's format
-    )
+    repository = "PrefectHQ/prefect"  # or DataDog/datadog-agent
+    limit = 200
 
-    # Get token from environment variable
-    token = os.environ.get("GITHUB_TOKEN", "")  # Use empty string instead of None
-
-    # Fetch issues and get as DataFrame
+    # Fetch issues and save as DataFrame
     issues_df = fetch_gh_issues(
         repository=repository,
-        limit=500,
-        exclude_pulls=True,
+        limit=limit,
         max_pages=20,
-        token=token,  # Pass the token directly
         show_urls=True,
     )
-
-    # Now you can work with the DataFrame
-    # For example, you could filter by state:
-    # open_issues = issues_df[issues_df['state'] == 'open']
-    # print("Open issues:", open_issues)
