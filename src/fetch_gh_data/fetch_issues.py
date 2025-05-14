@@ -37,17 +37,50 @@ def issues_to_dataframe(issues: List[Dict[str, Any]]) -> pd.DataFrame:
     if not issues:
         return pd.DataFrame()
     rows: List[Dict[str, Any]] = []
+
     for i in issues:
+        # dict_keys(['url', 'repository_url', 'labels_url', 'comments_url', 'events_url', 'html_url', 'id', 'node_id', 'number', 'title', 'user', 'labels', 'state', 'locked', 'assignee', 'assignees', 'milestone', 'comments', 'created_at', 'updated_at', 'closed_at', 'author_association', 'type', 'active_lock_reason', 'sub_issues_summary', 'body', 'closed_by', 'reactions', 'timeline_url', 'performed_via_github_app', 'state_reason'])
+
         rows.append(
             {
-                "number": i.get("number"),
+                "issue_number": i.get("number"),
                 "title": i.get("title"),
                 "state": i.get("state"),
+                "state_reason": i.get("state_reason"),
+                "body": i.get("body"),
                 "created_at": i.get("created_at"),
                 "updated_at": i.get("updated_at"),
+                "closed_at": i.get("closed_at"),
                 "comments": i.get("comments"),
-                "url": i.get("html_url"),
+                "labels": i.get("labels"),
                 "user": i.get("user", {}).get("login"),
+                "assignee": i.get("assignee", {}).get("login")
+                if i.get("assignee")
+                else None,
+                "author_association": i.get("author_association"),
+                "closed_by": i.get("closed_by", {}).get("login")
+                if i.get("closed_by")
+                else None,
+                "reactions": i.get("reactions", {}).get("total_count")
+                if i.get("reactions")
+                else 0,
+                "timeline_url": i.get("timeline_url"),
+                "sub_issues_total": i.get("sub_issues_summary", {}).get(
+                    "total_count", 0
+                )
+                if i.get("sub_issues_summary")
+                else 0,
+                "sub_issues_completed": i.get("sub_issues_summary", {}).get(
+                    "completed_count", 0
+                )
+                if i.get("sub_issues_summary")
+                else 0,
+                "sub_issues_percent_completed": i.get("sub_issues_summary", {}).get(
+                    "percent_complete", 0
+                )
+                if i.get("sub_issues_summary")
+                else 0,
+                "url": i.get("html_url"),
             }
         )
     return pd.DataFrame(rows)
@@ -64,7 +97,15 @@ def comments_to_dataframe(comments: List[Dict[str, Any]]) -> pd.DataFrame:
                 "issue_number": c.get("issue_number"),
                 "user": c.get("user", {}).get("login"),
                 "created_at": c.get("created_at"),
+                "updated_at": c.get("updated_at"),
+                "author_association": c.get("author_association"),
                 "body": c.get("body"),
+                "reactions": c.get("reactions", {}).get("total_count")
+                if c.get("reactions")
+                else 0,
+                "node_id": c.get("node_id"),
+                "issue_url": c.get("issue_url"),
+                "performed_via_github_app": c.get("performed_via_github_app"),
                 "url": c.get("html_url"),
             }
         )
@@ -195,7 +236,7 @@ def fetch_gh_issues(
 if __name__ == "__main__":
     fetch_gh_issues(
         repository="PrefectHQ/prefect",
-        limit=200,
+        limit=400,
         max_pages=20,
         show_urls=True,
     )
