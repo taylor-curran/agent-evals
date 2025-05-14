@@ -1,23 +1,15 @@
 # src/fetch_gh_data_3/fetch_issues.py
 
-import requests
 import os
 import pandas as pd
 from typing import List, Dict, Any, Optional
-from prefect import flow, task
-from prefect.tasks import exponential_backoff
+from prefect import flow
 
-
-# Prefect task to fetch a single page of issues with retries
-@task(retries=3, retry_delay_seconds=exponential_backoff(backoff_factor=10))
-def fetch_issue_page(page_url: str, headers: dict) -> List[Dict[Any, Any]]:
-    """
-    Fetch a single page of issues from the GitHub API.
-    Prefect handles retries with exponential back-off at this granular level.
-    """
-    response = requests.get(page_url, headers=headers)
-    response.raise_for_status()
-    return response.json()
+# import helper utilities
+from helper import (
+    fetch_issue_page,
+    convert_and_process,
+)
 
 
 @flow
@@ -93,61 +85,6 @@ def fetch_issues(
 
     # Return only up to the requested limit
     return all_issues[:limit]
-
-
-def issues_to_dataframe(issues: List[Dict[Any, Any]]) -> pd.DataFrame:
-    """
-    Convert a list of GitHub issue dictionaries to a pandas DataFrame.
-
-    Args:
-        issues: List of issue dictionaries from the GitHub API
-
-    Returns:
-        pandas DataFrame containing issue data
-    """
-    if not issues:
-        return pd.DataFrame()
-    # Select relevant columns for the DataFrame
-    issue_data = []
-    for issue in issues:
-        issue_data.append(
-            {
-                "number": issue["number"],
-                "title": issue["title"],
-                "state": issue["state"],
-                "created_at": issue["created_at"],
-                "updated_at": issue["updated_at"],
-                "comments": issue["comments"],
-                "user": issue["user"]["login"] if issue["user"] else None,
-                "url": issue["html_url"],
-            }
-        )
-
-    return pd.DataFrame(issue_data)
-
-
-def print_urls(df: pd.DataFrame):
-    """
-    Print the URLs of the issues in the DataFrame.
-
-    Args:
-        df: DataFrame containing issue data
-    """
-    for index, row in df.iterrows():
-        print(row["url"])
-
-
-@task
-def convert_and_process(issues, show_urls=True):
-    """Convert issues to DataFrame and process results"""
-    # Convert issues to DataFrame
-    df = issues_to_dataframe(issues)
-
-    # Print issue URLs if requested
-    if show_urls and not df.empty:
-        print_urls(df)
-
-    return df
 
 
 @flow(
