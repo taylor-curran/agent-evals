@@ -44,7 +44,9 @@ for _, row in closed_as_completed.head(2).iterrows():
 df_comments = pd.read_csv(f"{sanitized_repo}_issue_comments.csv")
 
 # only df comments on issues that are completed
-df_comments = df_comments[df_comments["issue_number"].isin(closed_as_completed["issue_number"])]
+df_comments = df_comments[
+    df_comments["issue_number"].isin(closed_as_completed["issue_number"])
+]
 
 # Show details for the first five comments
 for _, row in df_comments.head(5).iterrows():
@@ -60,7 +62,31 @@ for _, row in df_comments.head(5).iterrows():
     print("ISSUE URL:", row["issue_url"])
     print("URL:", row["url"])
     print("-" * 80)
-    
+
+# ---------------------------------------------------------------------------
+# Timeline events (issue closure reasons, labels, etc.)
+# ---------------------------------------------------------------------------
+
+df_events = pd.read_csv(f"{sanitized_repo}_issue_timeline.csv")
+
+# only events on issues that are completed
+df_events = df_events[
+    df_events["issue_number"].isin(closed_as_completed["issue_number"])
+]
+
+# Show details for the first five events
+for _, ev in df_events.head(5).iterrows():
+    print("EVENT ID:", ev.get("event_id"))
+    print("ISSUE #:", ev["issue_number"])
+    print("EVENT   :", ev["event"])
+    print("CREATED :", ev["created_at"])
+    print("ACTOR   :", ev["actor"])
+    print("COMMIT  :", ev.get("commit_id"))
+    print("PR #    :", ev.get("pull_number"))
+    print("LABEL   :", ev.get("label"))
+    print("URL     :", ev.get("url"))
+    print("-" * 80)
 
 print(closed_as_completed.columns)
 print(df_comments.columns)
+print(df_events.columns)

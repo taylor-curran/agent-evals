@@ -12,7 +12,7 @@ from prefect.task_runners import ThreadPoolTaskRunner
 # ---------------------------------------------------------------------------
 
 
-@task(retries=3, retry_delay_seconds=exponential_backoff(backoff_factor=10))
+@task(retries=4, retry_delay_seconds=exponential_backoff(backoff_factor=20))
 def fetch_issue_page(url: str, headers: Dict[str, str]) -> List[Dict[str, Any]]:
     """Grab one page of issues (or PRs) via the GitHub REST API."""
     resp = requests.get(url, headers=headers, timeout=30)
@@ -20,10 +20,18 @@ def fetch_issue_page(url: str, headers: Dict[str, str]) -> List[Dict[str, Any]]:
     return resp.json()
 
 
-@task(retries=3, retry_delay_seconds=exponential_backoff(backoff_factor=10))
+@task(retries=4, retry_delay_seconds=exponential_backoff(backoff_factor=20))
 def fetch_comments(comments_url: str, headers: Dict[str, str]) -> List[Dict[str, Any]]:
     """Fetch every comment attached to a single issue."""
     resp = requests.get(comments_url, headers=headers, timeout=30)
+    resp.raise_for_status()
+    return resp.json()
+
+
+@task(retries=4, retry_delay_seconds=exponential_backoff(backoff_factor=20))
+def fetch_timeline(timeline_url: str, headers: Dict[str, str]) -> List[Dict[str, Any]]:
+    """Fetch the timeline (event stream) for a single issue."""
+    resp = requests.get(timeline_url, headers=headers, timeout=30)
     resp.raise_for_status()
     return resp.json()
 
@@ -39,8 +47,6 @@ def issues_to_dataframe(issues: List[Dict[str, Any]]) -> pd.DataFrame:
     rows: List[Dict[str, Any]] = []
 
     for i in issues:
-        # dict_keys(['url', 'repository_url', 'labels_url', 'comments_url', 'events_url', 'html_url', 'id', 'node_id', 'number', 'title', 'user', 'labels', 'state', 'locked', 'assignee', 'assignees', 'milestone', 'comments', 'created_at', 'updated_at', 'closed_at', 'author_association', 'type', 'active_lock_reason', 'sub_issues_summary', 'body', 'closed_by', 'reactions', 'timeline_url', 'performed_via_github_app', 'state_reason'])
-
         rows.append(
             {
                 "issue_number": i.get("number"),
@@ -51,7 +57,7 @@ def issues_to_dataframe(issues: List[Dict[str, Any]]) -> pd.DataFrame:
                 "created_at": i.get("created_at"),
                 "updated_at": i.get("updated_at"),
                 "closed_at": i.get("closed_at"),
-                "comments": i.get("comments"),
+                "n_comments": i.get("comments"),
                 "labels": i.get("labels"),
                 "user": i.get("user", {}).get("login"),
                 "assignee": i.get("assignee", {}).get("login")
@@ -107,6 +113,40 @@ def comments_to_dataframe(comments: List[Dict[str, Any]]) -> pd.DataFrame:
                 "issue_url": c.get("issue_url"),
                 "performed_via_github_app": c.get("performed_via_github_app"),
                 "url": c.get("html_url"),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def timeline_to_dataframe(events: List[Dict[str, Any]]) -> pd.DataFrame:
+    """Convert a list of timeline events (all issues combined) into a DataFrame."""
+    if not events:
+        return pd.DataFrame()
+
+    rows: List[Dict[str, Any]] = []
+    for e in events:
+        rows.append(
+            {
+                "event_id": e.get("id"),
+                "node_id": e.get("node_id"),
+                "issue_number": e.get("issue_number"),
+                "event": e.get("event"),
+                "created_at": e.get("created_at"),
+                "actor": e.get("actor", {}).get("login") if e.get("actor") else None,
+                "commit_id": e.get("commit_id"),
+                "commit_url": e.get("commit_url"),
+                "label": e.get("label", {}).get("name") if e.get("label") else None,
+                "performed_via_github_app": e.get("performed_via_github_app"),
+                "pull_number": e.get("pull_request", {}).get("number")
+                if e.get("pull_request")
+                else None,
+                "pull_url": e.get("pull_request", {}).get("url")
+                if e.get("pull_request")
+                else None,
+                "source_type": e.get("source", {}).get("type")
+                if e.get("source")
+                else None,
+                "url": e.get("url"),
             }
         )
     return pd.DataFrame(rows)
@@ -191,23 +231,61 @@ def fetch_many_comments_for_issues(
 
 
 # ---------------------------------------------------------------------------
+# Sub-flow: fetch timeline events for many issues in parallel
+# ---------------------------------------------------------------------------
+
+
+@flow(name="fetch many issue timelines", log_prints=False)
+def fetch_many_timelines_for_issues(
+    issues: List[Dict[str, Any]],
+    token: Optional[str] = None,
+) -> pd.DataFrame:
+    log = get_run_logger()
+    if not issues:
+        log.warning("No issues passed in – skipping timeline collection.")
+        return pd.DataFrame()
+
+    headers = {"Accept": "application/vnd.github+json"}
+    if token:
+        headers["Authorization"] = f"token {token}"
+
+    futures: List[Tuple[int, Any]] = []
+    for issue in issues:
+        url = issue.get("timeline_url") or f"{issue['url']}/timeline"
+        fut = fetch_timeline.submit(url, headers)
+        futures.append((issue["number"], fut))
+
+    events: List[Dict[str, Any]] = []
+    for num, fut in futures:
+        try:
+            for ev in fut.result():
+                ev["issue_number"] = num
+                events.append(ev)
+        except Exception as exc:
+            log.error("Failed to fetch timeline for #%-5s: %s", num, exc, exc_info=True)
+
+    log.info("Collected %s total timeline events", len(events))
+    return timeline_to_dataframe(events)
+
+
+# ---------------------------------------------------------------------------
 # Top‑level orchestration flow
 # ---------------------------------------------------------------------------
 
 
 @flow(
-    name="Fetch GitHub Issues",
+    name="Fetch Closed GitHub Issues",
     task_runner=ThreadPoolTaskRunner(max_workers=3),
     log_prints=False,
 )
-def fetch_gh_issues(
+def fetch_closed_gh_issues(
     repository: str,
     limit: int = 100,
     max_pages: int = 20,
     token: Optional[str] = None,
     show_urls: bool = False,
-) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """End‑to‑end pipeline – returns *(issues_df, comments_df)* and writes two CSVs."""
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """End‑to‑end pipeline – returns *(issues_df, comments_df, timeline_df)* and writes three CSVs."""
     log = get_run_logger()
 
     token = token or os.getenv("GITHUB_TOKEN", "")
@@ -220,23 +298,30 @@ def fetch_gh_issues(
             log.info(url)
 
     comments_df = fetch_many_comments_for_issues(issues, token)
+    timeline_df = fetch_many_timelines_for_issues(issues, token)
 
     repo_safe = repository.replace("/", "_").replace("-", "_").replace(".", "_")
-    issues_path = f"{repo_safe}_issues.csv"
-    comments_path = f"{repo_safe}_issue_comments.csv"
-    issues_df.to_csv(issues_path, index=False)
-    comments_df.to_csv(comments_path, index=False)
+    issues_df.to_csv(f"{repo_safe}_issues.csv", index=False)
+    comments_df.to_csv(f"{repo_safe}_issue_comments.csv", index=False)
+    timeline_df.to_csv(f"{repo_safe}_issue_timeline.csv", index=False)
 
-    log.info("Saved %s issues → %s", len(issues_df), issues_path)
-    log.info("Saved %s comments → %s", len(comments_df), comments_path)
+    log.info("Saved %s issues → %s", len(issues_df), f"{repo_safe}_issues.csv")
+    log.info(
+        "Saved %s comments → %s", len(comments_df), f"{repo_safe}_issue_comments.csv"
+    )
+    log.info(
+        "Saved %s timeline events → %s",
+        len(timeline_df),
+        f"{repo_safe}_issue_timeline.csv",
+    )
 
-    return issues_df, comments_df
+    return issues_df, comments_df, timeline_df
 
 
 if __name__ == "__main__":
-    fetch_gh_issues(
+    fetch_closed_gh_issues(
         repository="PrefectHQ/prefect",
-        limit=400,
+        limit=100,
         max_pages=20,
         show_urls=True,
     )
