@@ -8,6 +8,7 @@ import requests
 
 GITHUB_API = "https://api.github.com/graphql"
 
+
 def _headers(token: str) -> Dict[str, str]:
     """Standard request headers for GitHub GraphQL API."""
     return {
@@ -38,6 +39,7 @@ def _pr_query(owner: str, name: str, pr_number: int) -> str:
         "  }\n"
         "}\n"
     )
+
 
 def fetch_issues_for_pr(
     repo: str,
@@ -70,6 +72,7 @@ def fetch_issues_for_pr(
         raise ValueError(f"Pull-request #{pr_number} not found in repository {repo}.")
 
     return pr_data["closingIssuesReferences"]["nodes"]
+
 
 def print_issues_for_pr(repo: str, pr_number: int, token: Optional[str] = None) -> None:
     """Fetch issues for *pr_number* and print a readable summary to stdout."""
