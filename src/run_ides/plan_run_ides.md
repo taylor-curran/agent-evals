@@ -1,39 +1,49 @@
-# Plan: `run_windsurf_prompt.py`
+# Plan: `run_windsurf_prompts.py`
 
 Automate **one** prompt from `generated_prompts.csv` in Windsurf, keeping the code reusable and import-friendly.
 
 ---
 ## 1. Objectives
 
-1. Launch Windsurf in a target repo (`windsurf .`).
-2. Feed the *next* prompt (FIFO) from `src/generate/generated_prompts.csv` into the chat (⌘⇧L).
-3. Wait (fixed delay for v0) for the agent to finish.
-4. Capture any code changes with `git diff` and save to `diffs/<pr_number>.patch` *(stdout too).*
-5. Expose everything behind **one** well-named function; the `__main__` guard should call only that.
+1. Optionally clone a target repository from a given URL (`repo_url`).
+2. Launch Windsurf in the target repository (`windsurf .`).
+3. Feed the *next* prompt (FIFO) from `src/generate/generated_prompts.csv` into the chat (⌘⇧L).
+4. Wait (fixed delay for v0) for the agent to finish.
+5. Capture any code changes with `git diff` and save to `diffs/<pr_number>.patch` *(stdout too).*
+6. Expose everything behind **one** well-named function; the `__main__` guard should call only that.
 
 ---
 ## 2. New file
 
-`src/run_ides/run_windsurf_prompt.py`
+`src/run_ides/run_windsurf_prompts.py`
 
 ```python
 from pathlib import Path
 from typing import Optional
-import csv, subprocess, shlex, time, os, sys, pyautogui
+import csv, subprocess, shlex, time, os, sys, shutil, pyautogui
 
 __all__ = ["run_prompt_for_next_row"]
 
 def run_prompt_for_next_row(
-    repo_path: Path,
-    csv_path: Path = Path("src/generate/generated_prompts.csv"),
+    *,  # keyword-only API
+    repo_url: str | None = None,
+    repo_path: Path | None = None,
+    csv_path: Path = DEFAULT_CSV,  # Path relative to script location
     startup_delay: float = 2,
     ui_settle_delay: float = 2,
     pre_type_wait: float = 10,
     chat_focus_pause: float = 0.5,
     pop_row: bool = True,
     diff_dir: Path = Path("diffs"),
+    completion_wait: float = 600,
+    poll_interval: float = 5,
+    grace_period: float = 180,
+    continue_interval: float = 60,
+    n_prompts: int = 1,
+    prompts: list[str] | None = None,
 ) -> Path:  # returns diff file path
     """Run the next CSV prompt in Windsurf and capture resulting diff."""
+    # 0. optionally clone repo if repo_url provided
     # 1. read & (optionally) pop first row
     # 2. launch windsurf .
     # 3. bring to front via osascript
@@ -44,7 +54,12 @@ def run_prompt_for_next_row(
     # 8. return path to diff file
 
 if __name__ == "__main__":
-    run_prompt_for_next_row(Path.cwd())
+    run_prompt_for_next_row(
+        repo_url="https://github.com/PrefectHQ/prefect",
+        prompts=[
+            "Add filtering logic to the cancellation-event subscription so that each process runner first verifies that the incoming event's flow-run identifier (e.g., matching work_pool_id, deployment_id, or another runner-specific tag) corresponds to a run it launched, and only then executes PID lookup, on-cancellation hooks, and state updates—otherwise the runner should ignore the event entirely without mutating the flow run's state or emitting warnings. Implement any and all changes once you determine the right course of action. Do not ask for my approval or solicit my opinion until you have made the required code changes."
+        ],
+    )
 ```
 
 *No* argparse; parameters are normal Python arguments with sensible defaults.
@@ -52,8 +67,14 @@ if __name__ == "__main__":
 ---
 ## 3. Detailed Steps
 
+0. **Clone repository (optional)**
+   - If `repo_url` is supplied, clone into `/Users/taylorcurran/Documents/dev/eval_dump/agent_cloned/<repo_name>`.
+   - If the target folder exists, delete it first, then clone (`git clone --depth 1`).
+   - Set `repo_path` to that directory for the remaining steps.
+
 1. **Prompt ingestion**
-   - Open CSV with `newline=""` and `csv.DictReader`.
+   - If `prompts` is provided, use the first prompt from that list.
+   - Otherwise, open CSV with `newline=""` and `csv.DictReader`.
    - Store first row → `pr_number`, `prompt_text`.
    - If `pop_row=True`, rewrite CSV without that row.
 
@@ -68,8 +89,8 @@ if __name__ == "__main__":
    ```
 
 4. **UI prep**
-   - Close all editors with ⌘K ⌘W (pyautogui).
-   - Sleep `ui_settle_delay`.
+   - Sleep `ui_settle_delay` (let editor tabs finish rendering).
+   - Close all editors with ⌘K ⌘W (pyautogui; includes a 0.3 s safety pause).
 
 5. **Send prompt**
    - Sleep `pre_type_wait` (gives model warm-up + user margin).
@@ -77,14 +98,16 @@ if __name__ == "__main__":
    - Sleep `chat_focus_pause`.
    - `pyautogui.typewrite(prompt_text, interval=0.02); pyautogui.press("enter")`.
 
-6. **Wait for completion** *(v0)*
-   - Simple `time.sleep(120)` or until user interrupts.
-   - TODO: smarter parsing of chat area or git diff polling.
+6. **Wait for completion**
+   - Poll `git diff` at regular intervals (`poll_interval` seconds).
+   - Track when diff stabilizes (no changes for `grace_period` seconds).
+   - Periodically send ⌥↵ (Option+Return) every `continue_interval` seconds to encourage the assistant to continue.
+   - Timeout after `completion_wait` seconds if specified.
 
 7. **Capture diff**
    - Ensure `diff_dir` exists.
-   - `diff = subprocess.check_output(["git", "diff"], cwd=repo_path).decode()`.
-   - Write to `diff_dir/f"{pr_number}.patch"`.
+   - `diff_bytes = subprocess.check_output(["git", "diff"], cwd=repo_path)`.
+   - Write to `diff_dir/f"{pr_number or int(time.time())}.patch"`.
    - Print diff to stdout for debugging.
 
 8. **Return path** so callers can fetch.
@@ -94,12 +117,12 @@ if __name__ == "__main__":
 
 - Parameterise `ide="windsurf" | "cursor" | "copilot"` and switch launch / focus logic.
 - Detect "END" or read Cascade chat DOM via AppleScript Accessibility API.
+- Support for hard-coded prompts via the `prompts` parameter, bypassing CSV reading.
 - Loop across all prompts; respect rate-limits.
 
 ---
 ## 5. Test-run checklist
 
-1. `git pull --depth 1` if repo not present.
-2. Run `python -m src.run_ides.run_windsurf_prompt` inside the target repo folder.
-3. Observe Windsurf opens, prompt sent, waits, diff captured.
-4. Confirm patch file exists and contains expected changes.
+1. Run `python run_windsurf_prompts.py` 
+2. Observe Windsurf opens, prompt sent, waits, diff captured.
+3. Confirm patch file exists and contains expected changes.

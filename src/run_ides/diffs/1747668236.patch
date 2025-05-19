@@ -1,0 +1,64 @@
+diff --git a/src/prefect/runner/_observers.py b/src/prefect/runner/_observers.py
+index b4d95e3..1fdd552 100644
+--- a/src/prefect/runner/_observers.py
++++ b/src/prefect/runner/_observers.py
+@@ -1,7 +1,7 @@
+ import asyncio
+ import uuid
+ from contextlib import AsyncExitStack
+-from typing import Any, Protocol
++from typing import Any, Callable, Protocol, Set
+ 
+ from prefect.events.clients import PrefectEventSubscriber, get_events_subscriber
+ from prefect.events.filters import EventFilter, EventNameFilter
+@@ -12,10 +12,19 @@ class OnCancellingCallback(Protocol):
+     def __call__(self, flow_run_id: uuid.UUID) -> None: ...
+ 
+ 
++class ShouldProcessCancellationCallback(Protocol):
++    def __call__(self, flow_run_id: uuid.UUID) -> bool: ...
++
++
+ class FlowRunCancellingObserver:
+-    def __init__(self, on_cancelling: OnCancellingCallback):
++    def __init__(
++        self, 
++        on_cancelling: OnCancellingCallback,
++        should_process_cancellation: ShouldProcessCancellationCallback | None = None,
++    ):
+         self.logger = get_logger("FlowRunCancellingObserver")
+         self.on_cancelling = on_cancelling
++        self.should_process_cancellation = should_process_cancellation
+         self._events_subscriber: PrefectEventSubscriber | None
+         self._exit_stack = AsyncExitStack()
+ 
+@@ -31,6 +40,15 @@ class FlowRunCancellingObserver:
+                         "prefect.flow-run.", ""
+                     )
+                 )
++                
++                # Check if this runner should process this cancellation event
++                if self.should_process_cancellation and not self.should_process_cancellation(flow_run_id):
++                    self.logger.debug(
++                        "Ignoring cancellation event for flow run %s as it doesn't match any runs launched by this runner",
++                        flow_run_id
++                    )
++                    continue
++                
+                 self.on_cancelling(flow_run_id)
+             except ValueError:
+                 self.logger.debug(
+diff --git a/src/prefect/runner/runner.py b/src/prefect/runner/runner.py
+index 0910734..79241c8 100644
+--- a/src/prefect/runner/runner.py
++++ b/src/prefect/runner/runner.py
+@@ -1505,7 +1505,8 @@ class Runner:
+             FlowRunCancellingObserver(
+                 on_cancelling=lambda flow_run_id: self._runs_task_group.start_soon(
+                     self._cancel_run, flow_run_id
+-                )
++                ),
++                should_process_cancellation=lambda flow_run_id: flow_run_id in self._flow_run_process_map
+             )
+         )
+         await self._exit_stack.enter_async_context(self._client)
