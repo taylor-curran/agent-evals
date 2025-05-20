@@ -57,7 +57,7 @@ if __name__ == "__main__":
     run_prompt_for_next_row(
         repo_url="https://github.com/PrefectHQ/prefect",
         prompts=[
-            "Add filtering logic to the cancellation-event subscription so that each process runner first verifies that the incoming event's flow-run identifier (e.g., matching work_pool_id, deployment_id, or another runner-specific tag) corresponds to a run it launched, and only then executes PID lookup, on-cancellation hooks, and state updates—otherwise the runner should ignore the event entirely without mutating the flow run's state or emitting warnings. Implement any and all changes once you determine the right course of action. Do not ask for my approval or solicit my opinion until you have made the required code changes."
+            "Add filtering logic to the cancellation-event subscription so that each process runner first verifies that the incoming event's flow-run identifier (e.g., matching work_pool_id, deployment_id, or another runner-specific tag) corresponds to a run it launched, and only then executes PID lookup, on-cancellation hooks, and state updates—otherwise the runner should ignore the event entirely without mutating the flow run's state or emitting warnings. Implement any and all changes once you determine the right course of action. Do not ask for my approval or solicit my opinion until you have finished making the required code changes."
         ],
     )
 ```
@@ -126,3 +126,11 @@ if __name__ == "__main__":
 1. Run `python run_windsurf_prompts.py` 
 2. Observe Windsurf opens, prompt sent, waits, diff captured.
 3. Confirm patch file exists and contains expected changes.
+
+
+# General TODOs
+
+- High Priority: The repo that is cloned should be a version that is reflective of the gh issues that generated the prompt. RN, these issues are historical and they don't apply to the current codebase.
+- It appeared as if the script wasn't going to the csv for the propmts and it was instead getting a prompt from the md file... i need to verify that part of the script is working properly.
+- Lower Priority: When a repo is cloned for the first time a message pops up in the IDE that asks if we trust the authors, we want to automate that acceptance perhaps.
+- We now have diffs making themselves apparent in /diffs -- we will eventually need to build a grading system that grades the raw diff against the real PR.

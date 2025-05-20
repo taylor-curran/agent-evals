@@ -1,0 +1,93 @@
+diff --git a/src/prefect/runner/_observers.py b/src/prefect/runner/_observers.py
+index b4d95e3..c60d8a3 100644
+--- a/src/prefect/runner/_observers.py
++++ b/src/prefect/runner/_observers.py
+@@ -1,7 +1,7 @@
+ import asyncio
+ import uuid
+ from contextlib import AsyncExitStack
+-from typing import Any, Protocol
++from typing import Any, Callable, Protocol
+ 
+ from prefect.events.clients import PrefectEventSubscriber, get_events_subscriber
+ from prefect.events.filters import EventFilter, EventNameFilter
+@@ -13,9 +13,10 @@ class OnCancellingCallback(Protocol):
+ 
+ 
+ class FlowRunCancellingObserver:
+-    def __init__(self, on_cancelling: OnCancellingCallback):
++    def __init__(self, on_cancelling: OnCancellingCallback, flow_run_filter_callback: Callable[[uuid.UUID], bool] = None):
+         self.logger = get_logger("FlowRunCancellingObserver")
+         self.on_cancelling = on_cancelling
++        self.flow_run_filter_callback = flow_run_filter_callback
+         self._events_subscriber: PrefectEventSubscriber | None
+         self._exit_stack = AsyncExitStack()
+ 
+@@ -31,6 +32,16 @@ class FlowRunCancellingObserver:
+                         "prefect.flow-run.", ""
+                     )
+                 )
++                
++                # Apply filtering logic if a filter callback is provided
++                if self.flow_run_filter_callback is not None:
++                    if not self.flow_run_filter_callback(flow_run_id):
++                        self.logger.debug(
++                            "Ignoring cancellation event for flow run %s as it was not launched by this runner",
++                            flow_run_id,
++                        )
++                        continue
++                
+                 self.on_cancelling(flow_run_id)
+             except ValueError:
+                 self.logger.debug(
+diff --git a/src/prefect/runner/runner.py b/src/prefect/runner/runner.py
+index a8265fa..42279b3 100644
+--- a/src/prefect/runner/runner.py
++++ b/src/prefect/runner/runner.py
+@@ -963,7 +963,15 @@ class Runner:
+         if isinstance(flow_run, uuid.UUID):
+             flow_run = await self._client.read_flow_run(flow_run)
+         run_logger = self._get_flow_run_logger(flow_run)
+-
++        
++        # Check if this flow run is managed by this runner
++        if not self._is_flow_run_managed_by_this_runner(flow_run.id):
++            self._logger.debug(
++                "Ignoring cancellation request for flow run %s as it was not launched by this runner",
++                flow_run.id,
++            )
++            return
++        
+         process_map_entry = self._flow_run_process_map.get(flow_run.id)
+ 
+         pid = process_map_entry.get("pid") if process_map_entry else None
+@@ -1033,6 +1041,19 @@ class Runner:
+             coros.append(self._emit_flow_run_heartbeat(entry["flow_run"]))
+         await asyncio.gather(*coros)
+ 
++    def _is_flow_run_managed_by_this_runner(self, flow_run_id: uuid.UUID) -> bool:
++        """
++        Determines if a flow run is managed by this runner.
++        
++        Args:
++            flow_run_id: The ID of the flow run to check.
++        
++        Returns:
++            True if the flow run is managed by this runner, False otherwise.
++        """
++        # Check if the flow run is in the process map, which means it was launched by this runner
++        return flow_run_id in self._flow_run_process_map
++
+     async def _emit_flow_run_heartbeat(self, flow_run: "FlowRun"):
+         from prefect import __version__
+ 
+@@ -1498,7 +1519,8 @@ class Runner:
+             FlowRunCancellingObserver(
+                 on_cancelling=lambda flow_run_id: self._runs_task_group.start_soon(
+                     self._cancel_run, flow_run_id
+-                )
++                ),
++                flow_run_filter_callback=self._is_flow_run_managed_by_this_runner
+             )
+         )
+         await self._exit_stack.enter_async_context(self._client)
