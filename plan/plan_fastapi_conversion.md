@@ -23,7 +23,8 @@
 | Routers | `app/routers/prompts.py` | Houses two endpoint functions |
 | Models | `app/models.py` | `Prompt` SQLModel table |
 | DB utils | `app/db.py` | Async engine/session helpers |
-| Data import script | `scripts/csv_to_sqlite.py` | One-off: load existing `generated_prompts.csv` into DB |
+| DB setup script | `scripts/init_db.py` | One-off: create SQLite schema |
+| Package config | `pyproject.toml` | Hatch build settings |
 | Tests | `tests/test_prompts.py` | Pytest, uses `httpx` async client |
 | Dockerfile (optional) | `Dockerfile` | Only if/when containerising |
 
@@ -73,11 +74,17 @@ httpx[async]>=0.27 # testing client
    ```
 2. **Engine & session** (`app/db.py`)
    ```python
-   engine = create_engine("sqlite+aiosqlite:///evals.db", echo=False, future=True)
-   async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+   from sqlalchemy.ext.asyncio import create_async_engine
+   
+   engine = create_async_engine("sqlite+aiosqlite:///evals.db", echo=False)
+   async_session = async_sessionmaker(engine, expire_on_commit=False)
    ```
-3. **Init DB on startup** (`create_app` lifespan event).
-4. **CSV migration**: `scripts/csv_to_sqlite.py` reads `generated_prompts.csv` and bulk-inserts.
+3. **Init DB setup** via `scripts/init_db.py` (one-off):
+   ```python
+   async def init_db() -> None:
+       async with engine.begin() as conn:
+           await conn.run_sync(SQLModel.metadata.create_all)
+   ```
 
 ---
 ## 6. Endpoint Design
@@ -107,10 +114,17 @@ Apply with `dependencies=[Depends(require_token)]` once needed.
 ---
 ## 8. Running Locally
 
-```
-python -m pip install -r requirements.txt
-python scripts/csv_to_sqlite.py  # one-off import
-uvicorn app.main:create_app --factory --reload  # auto-reload during dev
+```bash
+# Create venv & install deps
+uv venv
+source .venv/bin/activate
+uv pip install -e .     # install package in dev mode
+
+# Initialize DB
+python scripts/init_db.py
+
+# Run API
+python -m app.main     # auto-reload dev server
 ```
 
 Open Swagger UI: `http://127.0.0.1:8000/docs`
