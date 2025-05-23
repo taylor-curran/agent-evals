@@ -73,7 +73,7 @@ httpx[async]>=0.27 # testing client
    ```
 2. **Engine & session** (`app/db.py`)
    ```python
-   engine = create_engine("sqlite+aiosqlite:///prompts.db", echo=False, future=True)
+   engine = create_engine("sqlite+aiosqlite:///evals.db", echo=False, future=True)
    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
    ```
 3. **Init DB on startup** (`create_app` lifespan event).
