@@ -1,0 +1,27 @@
+# Core web framework and API
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# HTTP clients
+requests>=2.31.0
+httpx>=0.25.0
+
+# Database
+sqlalchemy>=2.0.0
+
+# Data validation and serialization
+pydantic>=2.5.0
+
+# AI/ML (optional - for OpenAI integration)
+openai>=1.0.0
+
+# GUI automation (for IDE testing scripts)
+pyautogui>=0.9.54
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+
+# Development tools (optional)
+ruff>=0.1.0
+black>=23.0.0
