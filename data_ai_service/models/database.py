@@ -28,13 +28,22 @@ CREATE_TABLE_STATEMENTS = [
     CREATE TABLE IF NOT EXISTS pr_issues (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         dataset_id TEXT REFERENCES datasets(id),
+        
+        -- PR fields
         pr_number INTEGER,
         pr_url TEXT,
+        pr_title TEXT,
         pr_merged_at TIMESTAMP,
+        pr_base_branch TEXT,
+        pr_merge_commit_sha TEXT,
+        
+        -- Issue fields
         issue_number INTEGER,
         issue_url TEXT,
         issue_title TEXT,
-        issue_body TEXT
+        issue_body TEXT,
+        issue_state TEXT,
+        issue_reason TEXT
     );
     """,
     # prompts
@@ -65,3 +74,9 @@ def init_db() -> None:
 def get_engine():
     """Get a SQLAlchemy engine for the database."""
     return create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+
+
+def get_db_connection():
+    """Get a raw database connection for SQL queries."""
+    engine = get_engine()
+    return engine.connect()

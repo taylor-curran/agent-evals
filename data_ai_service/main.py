@@ -7,12 +7,16 @@ from typing import Dict
 
 from fastapi import FastAPI
 from models.database import init_db
+from routers import github
 
 # ---------------------------------------------------------------------------
 # FastAPI application
 # ---------------------------------------------------------------------------
 
 app = FastAPI(title="Data+AI Service", version="0.1.0")
+
+# Include routers
+app.include_router(github.router)
 
 
 @app.on_event("startup")
