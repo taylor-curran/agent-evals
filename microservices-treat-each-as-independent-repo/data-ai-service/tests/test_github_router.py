@@ -1,3 +1,5 @@
+# data-ai-service/tests/test_github_router.py
+
 """Tests for GitHub API router endpoints."""
 import pytest
 from unittest.mock import AsyncMock, patch

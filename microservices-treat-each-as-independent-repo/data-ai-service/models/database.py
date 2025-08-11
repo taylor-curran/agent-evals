@@ -1,3 +1,5 @@
+# data-ai-service/models/database.py
+
 """Database initialization and connection management for Data+AI Service.
 
 This module handles SQLite database setup and ensures required tables exist.
