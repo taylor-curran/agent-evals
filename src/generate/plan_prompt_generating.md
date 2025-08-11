@@ -1,33 +1,18 @@
-# Prompt-Generation Pipeline Plan
+# Prompt-Generation Pipeline
 
-> This document outlines the **minimal first iteration** for generating evaluation prompts from GitHub issues that are grouped under a single pull-request (PR).
->
-> Implementation will live in `src/generate/get_gh_data/generate_prompts_from_issues.py` and expose an importable `generate_prompt_from_issues()` entry-point.
+Generates evaluation prompts from GitHub issues grouped by PR. Lives in `src/generate/get_gh_data/generate_prompts_from_issues.py`.
 
----
-
-## 1. High-level flow
+## Flow
 
 ```
-pr_issue_mapping.csv ──▶ group rows by pr_number
-                          │
-                          ▼
-                     fetch issue details        (GraphQL → title, body, first comment*)
-                          │
-                          ▼
-               assemble raw issue synopsis per PR
-                          │
-                          ▼
-      OpenAI call (optional, controlled by flag) ──▶ condensed coding prompt
-                          │
-                          ├─► write CSV  (pr_number, prompt_text)
-                          ▼
-                          └─► append to Markdown (# PR <nr> \n prompt_text)
+pr_issue_mapping.csv → group by pr_number → fetch issues (GraphQL)
+                                              ↓
+                                         build prompt
+                                              ↓
+                            optional OpenAI summarization
+                                              ↓
+                           output: CSV + Markdown files
 ```
-
-*For now we will **not** include additional issue comments to avoid PR detail leakage; but we will fetch the first top-level comment when present so we can experiment later.*
-
----
 
 ## 2. Core components
 

@@ -180,3 +180,7 @@ cython_debug/
 **.csv
 
 **CLAUDE.local.md
+
+# SonarQube
+.scannerwork/
+sonar-project.properties
