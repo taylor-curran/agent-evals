@@ -30,9 +30,7 @@ curl http://localhost:8000/health
 **Expected Response:**
 ```json
 {
-  "status": "healthy",
-  "service": "data-ai-service",
-  "version": "0.1.0"
+  "status": "ok"
 }
 ```
 
