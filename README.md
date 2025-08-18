@@ -1,4 +1,4 @@
-# agent_evals
+# agent-evals
 
 Agent evaluation platform using real GitHub data to test coding agents.
 
