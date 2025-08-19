@@ -36,6 +36,47 @@ Two-service architecture for evaluating coding agents using real GitHub data.
 
 ### Data+AI Service Database
 
+```mermaid
+erDiagram
+    repositories {
+        text id PK "owner/repo format"
+        timestamp last_synced
+        text default_branch "usually main"
+        json metadata "stars, language, etc"
+    }
+    
+    pr_issues {
+        int id PK "auto-increment"
+        text repo_id FK "references repositories.id"
+        int pr_number "GitHub PR number"
+        text pr_url
+        text pr_title
+        timestamp pr_merged_at
+        text pr_base_sha "commit PR branched from"
+        text pr_base_branch "branch name"
+        text pr_merge_sha "merge commit for diff"
+        json issue_numbers "[123, 456]"
+        json issues_metadata "array of issue objects"
+    }
+    
+    prompts {
+        text id PK "UUID"
+        int pr_issue_id FK "references pr_issues.id"
+        text prompt_text "sanitized issue text"
+        text generation_strategy "clean, raw, ai_enhanced"
+        timestamp created_at
+    }
+    
+    repositories ||--o{ pr_issues : "has many"
+    pr_issues ||--o{ prompts : "generates"
+```
+
+**Key Points:**
+- One repository can have many PR/issue pairs
+- Each PR/issue pair represents one PR with its linked issues (stored as JSON arrays)
+- Multiple prompts can be generated from one PR/issue pair (different strategies)
+- The `pr_base_sha` is critical - it's the exact commit the agent should checkout
+
 ```sql
 -- Cached repository metadata
 repositories (
