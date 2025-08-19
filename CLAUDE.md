@@ -20,3 +20,10 @@ When working with this project:
    - etc.
 
 The key point: Once the venv is activated, interact with it like a normal Python environment. UV is just the package manager, not a runtime wrapper.
+
+## File Management
+
+When refactoring or replacing files, **move them to `z_archive/` instead of deleting**:
+- Preserves project history
+- Allows easy reference to old implementations
+- Safer than permanent deletion
