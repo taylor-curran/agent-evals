@@ -1,347 +1,274 @@
-# Data-AI Service Manual Validation Guide
+# Data+AI Service Validation Guide v2
 
-This guide walks you through validating each endpoint of the data-ai service step by step, showing you exactly what's happening with requests, responses, and database changes.
+This guide validates the Data+AI Service endpoints based on the architecture in MICROSERVICE_ARCHITECTURE.md.
 
 ## Prerequisites
 
-1. **Start the service:**
 ```bash
+# Start the service
 source .venv/bin/activate
 cd microservices/data-ai-service
-python -m uvicorn main:app --port 8000
+python -m uvicorn main:app --port 8001
 ```
 
-2. **Check the database (optional):**
-```bash
-sqlite3 microservices/data-ai-service/data_ai_service.db
-.tables
-.schema
-```
-
-## Step-by-Step Validation
+## Core Endpoints
 
 ### 1. Health Check
-**Purpose:** Verify the service is running
 
 ```bash
-curl http://localhost:8000/health
+curl http://localhost:8001/health
 ```
 
-**Expected Response:**
+**Expected:**
 ```json
-{
-  "status": "ok"
-}
+{"status": "ok"}
 ```
 
 ---
 
-### 2. Create a Project
-**Purpose:** Store project metadata in the database
+### 2. Sync Repository Data
+
+**Purpose:** Extract PR/issue pairs with version tracking
 
 ```bash
-curl -X POST http://localhost:8000/projects \
+curl -X POST http://localhost:8001/repos/sync \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "Test GitHub Analysis",
-    "description": "Analyzing Python repositories for code quality"
+    "repo_url": "https://github.com/psf/requests",
+    "lookback_days": 30
   }'
 ```
 
 **Expected Response:**
 ```json
 {
-  "id": 1,
-  "name": "Test GitHub Analysis",
-  "description": "Analyzing Python repositories for code quality",
-  "created_at": "2025-01-18T18:30:00.123456"
+  "repo_id": "psf/requests",
+  "new_prs": 15,
+  "new_issues": 23,
+  "total_pr_issue_pairs": 12
 }
 ```
 
-**What happens behind the scenes:**
-- Creates a new row in the `projects` table
-- Auto-generates an ID and timestamp
-- Returns the created project with its ID
+**What happens:**
+- Fetches PRs that closed issues
+- Stores `pr_base_sha` (commit PR branched from)
+- Stores `pr_merge_sha` (merge commit for comparison)
+- Links issues to PRs
 
-**Check the database:**
+**Check database:**
 ```bash
-sqlite3 microservices/data-ai-service/data_ai_service.db "SELECT * FROM projects;"
+sqlite3 microservices/data-ai-service/data_ai_service.db \
+  "SELECT pr_number, pr_base_sha, issue_numbers FROM pr_issues WHERE repo_id='psf/requests' LIMIT 3;"
 ```
 
 ---
 
-### 3. Get Project Details
-**Purpose:** Retrieve a specific project by ID
+### 3. Get PR/Issue Pairs
+
+**Purpose:** List PR/issue pairs with version info
 
 ```bash
-curl http://localhost:8000/projects/1
-```
-
-**Expected Response:**
-```json
-{
-  "id": 1,
-  "name": "Test GitHub Analysis",
-  "description": "Analyzing Python repositories for code quality",
-  "created_at": "2025-01-18T18:30:00.123456"
-}
-```
-
----
-
-### 4. List All Projects
-**Purpose:** See all projects in the database
-
-```bash
-curl http://localhost:8000/projects
+curl http://localhost:8001/repos/psf/requests/pr-issues
 ```
 
 **Expected Response:**
 ```json
 [
   {
-    "id": 1,
-    "name": "Test GitHub Analysis",
-    "description": "Analyzing Python repositories for code quality",
-    "created_at": "2025-01-18T18:30:00.123456"
+    "pr_number": 6789,
+    "pr_base_sha": "abc123def",
+    "pr_base_branch": "main",
+    "pr_merge_sha": "xyz789ghi",
+    "issue_numbers": [1234, 5678],
+    "issues_metadata": [
+      {
+        "number": 1234,
+        "title": "Bug in session handling",
+        "created_at": "2024-01-15T10:00:00Z"
+      },
+      {
+        "number": 5678,
+        "title": "Related auth issue",
+        "created_at": "2024-01-20T14:30:00Z"
+      }
+    ]
   }
 ]
 ```
 
 ---
 
-### 5. Extract GitHub Data
-**Purpose:** The main feature - fetch and analyze repository data from GitHub
+### 4. Generate Prompts
+
+**Purpose:** Create sanitized prompts from issues with checkout instructions
 
 ```bash
-curl -X POST http://localhost:8000/extract \
+curl -X POST http://localhost:8001/prompts/generate \
   -H "Content-Type: application/json" \
   -d '{
-    "project_id": 1,
-    "repo_url": "https://github.com/psf/requests",
-    "filters": {
-      "file_extensions": [".py"],
-      "max_files": 3
-    }
+    "pr_issue_ids": [1, 2],
+    "strategy": "clean"
   }'
 ```
 
 **Expected Response:**
 ```json
 {
-  "extraction_id": 1,
-  "status": "completed",
-  "message": "Successfully extracted data from psf/requests"
+  "prompts": [
+    {
+      "id": "prompt-uuid-123",
+      "prompt_text": "Fix the following bugs:\n1. Session handling is broken when...\n2. Authentication fails when...",
+      "checkout_sha": "abc123def",
+      "checkout_branch": "main",
+      "repo_url": "https://github.com/psf/requests",
+      "pr_number": 6789
+    }
+  ]
 }
 ```
 
-**What happens behind the scenes:**
-1. Parses the GitHub URL to extract owner/repo
-2. Makes GitHub API call to get repository metadata
-3. Fetches file tree from the repository
-4. Filters files by extension (.py)
-5. Downloads content of up to 3 Python files
-6. Stores everything in the `extractions` table
-7. Links extraction to the project via `project_id`
-
-**Check the extraction in database:**
-```bash
-sqlite3 microservices/data-ai-service/data_ai_service.db \
-  "SELECT id, project_id, status, created_at FROM extractions;"
-```
+**Key points:**
+- `prompt_text` has no PR references or hints
+- `checkout_sha` tells agent exact commit to use
+- Prompts are cached for reuse
 
 ---
 
-### 6. Get Extraction Details
-**Purpose:** Check status and results of a specific extraction
+### 5. Evaluate Diff
+
+**Purpose:** Compare agent-generated diff vs real PR diff
 
 ```bash
-curl http://localhost:8000/extractions/1
+curl -X POST http://localhost:8001/evaluate/diff \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agent_diff": "diff --git a/requests/sessions.py...",
+    "real_diff": "diff --git a/requests/sessions.py...",
+    "evaluation_strategy": "similarity"
+  }'
 ```
 
 **Expected Response:**
 ```json
 {
-  "id": 1,
-  "project_id": 1,
-  "status": "completed",
-  "created_at": "2025-01-18T18:31:00.123456",
-  "result": {
-    "repository": {
-      "full_name": "psf/requests",
-      "description": "A simple, yet elegant, HTTP library.",
-      "stars": 50000,
-      "language": "Python"
-    },
-    "files": [
-      {
-        "path": "requests/__init__.py",
-        "size": 4521,
-        "content": "# -*- coding: utf-8 -*-\n..."
-      },
-      {
-        "path": "requests/api.py",
-        "size": 6234,
-        "content": "# -*- coding: utf-8 -*-\n..."
-      }
-    ],
-    "metadata": {
-      "extraction_time": "2025-01-18T18:31:00.123456",
-      "files_processed": 2,
-      "total_size": 10755
-    }
+  "score": 0.87,
+  "analysis": {
+    "files_matched": ["requests/sessions.py"],
+    "files_missed": [],
+    "similarity_score": 0.87,
+    "approach_analysis": "Agent correctly identified the root cause..."
   }
 }
 ```
 
 ---
 
-### 7. Update a Project
-**Purpose:** Modify project metadata
+## Complete Workflow Test
+
+Simulate the full evaluation flow:
 
 ```bash
-curl -X PUT http://localhost:8000/projects/1 \
-  -H "Content-Type: application/json" \
+# 1. Sync repository
+curl -X POST http://localhost:8001/repos/sync \
+  -d '{"repo_url": "https://github.com/psf/requests", "lookback_days": 30}'
+
+# 2. Get PR/issue pairs
+curl http://localhost:8001/repos/psf/requests/pr-issues > pr_issues.json
+
+# 3. Generate prompt from first pair
+PR_ISSUE_ID=$(cat pr_issues.json | jq '.[0].id')
+curl -X POST http://localhost:8001/prompts/generate \
+  -d "{\"pr_issue_ids\": [$PR_ISSUE_ID], \"strategy\": \"clean\"}" > prompt.json
+
+# 4. Check what commit agent should use
+cat prompt.json | jq '.prompts[0].checkout_sha'
+
+# 5. (Agent would clone at that SHA and generate a diff)
+
+# 6. Evaluate the diff
+curl -X POST http://localhost:8001/evaluate/diff \
   -d '{
-    "description": "Updated: Analyzed requests library for code patterns"
+    "agent_diff": "...",
+    "real_diff": "..."
   }'
 ```
 
-**Expected Response:**
-```json
-{
-  "id": 1,
-  "name": "Test GitHub Analysis",
-  "description": "Updated: Analyzed requests library for code patterns",
-  "created_at": "2025-01-18T18:30:00.123456"
-}
+---
+
+## Database Inspection
+
+### View repository cache:
+```sql
+SELECT id, last_synced, default_branch 
+FROM repositories;
+```
+
+### View PR/issue pairs with versions:
+```sql
+SELECT 
+  pr_number,
+  pr_base_sha,
+  pr_base_branch,
+  json_extract(issue_numbers, '$') as issues
+FROM pr_issues 
+WHERE repo_id = 'psf/requests'
+LIMIT 5;
+```
+
+### View cached prompts:
+```sql
+SELECT 
+  id,
+  substr(prompt_text, 1, 100) as prompt_preview,
+  generation_strategy
+FROM prompts;
 ```
 
 ---
 
-### 8. Delete a Project
-**Purpose:** Remove a project and all its extractions (cascade delete)
+## Testing Version Awareness
+
+To verify agents get the right commit:
 
 ```bash
-curl -X DELETE http://localhost:8000/projects/1
-```
+# Get a PR/issue pair
+curl http://localhost:8001/repos/psf/requests/pr-issues | jq '.[0]'
 
-**Expected Response:**
-```json
-{
-  "message": "Project deleted successfully"
-}
-```
+# Note the pr_base_sha (e.g., "abc123def")
+# Generate prompt
+curl -X POST http://localhost:8001/prompts/generate \
+  -d '{"pr_issue_ids": [1], "strategy": "clean"}' | jq '.prompts[0]'
 
-**What happens behind the scenes:**
-- Deletes the project from `projects` table
-- CASCADE DELETE removes all related extractions
-- Database is cleaned up automatically
-
-**Verify deletion:**
-```bash
-sqlite3 microservices/data-ai-service/data_ai_service.db \
-  "SELECT COUNT(*) as project_count FROM projects; \
-   SELECT COUNT(*) as extraction_count FROM extractions;"
+# Verify checkout_sha matches pr_base_sha
+# This ensures agent sees code as developer did
 ```
 
 ---
 
-## Understanding the Data Flow
+## Key Differences from V1
 
-### Request Journey
-1. **Client** → HTTP Request → **FastAPI Router**
-2. **Router** → Validates input → **Service Layer**
-3. **Service** → Business logic → **Database (CRUD)**
-4. **Database** → SQLite operations → **Return data**
-5. **Service** → Format response → **Router**
-6. **Router** → JSON response → **Client**
-
-### Key Components
-
-**Routers** (`routers/github.py`):
-- Define API endpoints
-- Handle HTTP requests/responses
-- Validate input data using Pydantic schemas
-
-**Services** (`services/github_service.py`):
-- Business logic for GitHub integration
-- Makes external API calls
-- Processes and transforms data
-
-**CRUD** (`database/crud.py`):
-- Database operations (Create, Read, Update, Delete)
-- SQL queries via SQLAlchemy
-- Transaction management
-
-**Models** (`models/database.py`):
-- SQLAlchemy table definitions
-- Database schema
-
-**Schemas** (`models/schemas.py`):
-- Pydantic models for request/response validation
-- Data type enforcement
+1. **No projects table** - Data+AI is stateless
+2. **Version tracking** - `pr_base_sha` for accurate testing
+3. **Cached prompts** - Reusable across experiments
+4. **Clear checkout instructions** - Each prompt includes exact SHA
+5. **Stateless evaluation** - Just compares diffs, no project context
 
 ---
 
-## Debugging Tips
-
-### Watch the server logs
-The terminal running uvicorn shows:
-- Incoming requests with method and path
-- Response status codes
-- Any errors or exceptions
-
-Example:
-```
-INFO:     127.0.0.1:58432 - "GET /health HTTP/1.1" 200 OK
-INFO:     127.0.0.1:58433 - "POST /projects HTTP/1.1" 200 OK
-```
-
-### Check database state
-```bash
-# Open SQLite shell
-sqlite3 microservices/data-ai-service/data_ai_service.db
-
-# Useful commands:
-.tables                    # List all tables
-.schema projects          # Show table structure
-SELECT * FROM projects;   # View all projects
-SELECT * FROM extractions WHERE project_id = 1;  # View extractions for a project
-.quit                     # Exit
-```
-
-### Test error handling
-Try these to see error responses:
+## Error Testing
 
 ```bash
-# Non-existent project
-curl http://localhost:8000/projects/999
+# Invalid repo URL
+curl -X POST http://localhost:8001/repos/sync \
+  -d '{"repo_url": "not-a-url"}'
 
-# Invalid GitHub URL
-curl -X POST http://localhost:8000/extract \
-  -H "Content-Type: application/json" \
-  -d '{
-    "project_id": 1,
-    "repo_url": "not-a-url"
-  }'
+# Non-existent PR/issue ID
+curl -X POST http://localhost:8001/prompts/generate \
+  -d '{"pr_issue_ids": [999999]}'
 
-# Missing required field
-curl -X POST http://localhost:8000/projects \
-  -H "Content-Type: application/json" \
+# Missing required fields
+curl -X POST http://localhost:8001/evaluate/diff \
   -d '{}'
 ```
 
----
-
-## What You're Seeing "With Your Own Eyes"
-
-When you run these commands, you're observing:
-
-1. **HTTP Traffic**: The actual requests being sent and responses received
-2. **Database Changes**: Real data being written to SQLite
-3. **GitHub API Integration**: Live calls to GitHub's API (rate limited to 60/hour for unauthenticated)
-4. **Error Handling**: How the service responds to bad input
-5. **Data Transformation**: Raw GitHub data → Structured database records
-
-This is your "debugger-like experience" - you can see exactly what goes in, what happens inside, and what comes out!
+This validates the Data+AI Service as a stateless toolbox that provides versioned GitHub data and evaluation utilities!
