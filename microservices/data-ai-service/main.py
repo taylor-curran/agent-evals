@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from models.database import init_db
 from routers import github
 
+# Example comment: This service handles GitHub data integration and AI processing
 # ---------------------------------------------------------------------------
 # FastAPI application
 # ---------------------------------------------------------------------------
