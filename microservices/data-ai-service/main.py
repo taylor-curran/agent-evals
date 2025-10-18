@@ -26,5 +26,9 @@ async def on_startup() -> None:
 
 @app.get("/health", response_model=Dict[str, str])
 async def health() -> Dict[str, str]:
-    """Simple health-check endpoint."""
+    """Simple health-check endpoint.
+    
+    This endpoint is used by load balancers and monitoring systems
+    to verify that the service is running and responsive.
+    """
     return {"status": "ok"}
